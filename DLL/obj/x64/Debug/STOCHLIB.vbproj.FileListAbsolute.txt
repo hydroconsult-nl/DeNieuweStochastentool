@@ -296,3 +296,6 @@ C:\GITHUB\DeNieuweStochastentool\DLL\obj\x64\Debug\STOCHLIB.vbproj.Up2Date
 C:\GITHUB\DeNieuweStochastentool\DLL\obj\x64\Debug\STOCHLIB.dll
 C:\GITHUB\DeNieuweStochastentool\DLL\obj\x64\Debug\STOCHLIB.xml
 C:\GITHUB\DeNieuweStochastentool\DLL\obj\x64\Debug\STOCHLIB.pdb
+C:\GITHUB\DeNieuweStochastentool\DLL\bin\x64\MathNet.Numerics.dll
+C:\GITHUB\DeNieuweStochastentool\DLL\bin\x64\Microsoft.Win32.Registry.dll
+C:\GITHUB\DeNieuweStochastentool\DLL\bin\x64\MathNet.Numerics.xml

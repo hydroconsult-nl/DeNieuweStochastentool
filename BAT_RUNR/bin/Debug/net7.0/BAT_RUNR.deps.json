@@ -17,7 +17,7 @@
       "STOCHLIB/1.0.0": {
         "runtime": {
           "STOCHLIB.dll": {
-            "assemblyVersion": "1.0.0",
+            "assemblyVersion": "2.4.0.0",
             "fileVersion": "2.4.0.0"
           }
         }

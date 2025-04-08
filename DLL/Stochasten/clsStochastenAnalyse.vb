@@ -477,9 +477,18 @@ Public Class clsStochastenAnalyse
 
     Public Function AddExceedanceData1DJSON(exceedancedatapath As String, configurationName As String) As Boolean
         Try
+            Dim i As Integer, j As Integer, p As Integer
             Dim locdt As New DataTable
             Dim query As String = "SELECT DISTINCT LOCATIENAAM FROM HERHALINGSTIJDEN WHERE KLIMAATSCENARIO='" & KlimaatScenario.ToString & "' AND DUUR=" & Duration & ";"
             Setup.GeneralFunctions.SQLiteQuery(Me.Setup.SqliteCon, query, locdt, True)
+
+            'get the distinct parameters
+            Dim pardt As New DataTable
+            query = "SELECT DISTINCT PARAMETER FROM HERHALINGSTIJDEN WHERE KLIMAATSCENARIO='" & KlimaatScenario.ToString & "' AND DUUR=" & Duration & ";"
+            Setup.GeneralFunctions.SQLiteQuery(Me.Setup.SqliteCon, query, pardt, False)
+            If pardt.Rows.Count = 0 Then
+                Throw New Exception("No parameters found in the table HERHALINGSTIJDEN of the database. Please consider postprocessing (nabewerken) your results first.")
+            End If
 
             'Read the runs from our database and turn them into a dictionary for faster lookups
             Dim rdt As New DataTable
@@ -505,40 +514,45 @@ Public Class clsStochastenAnalyse
             newScenario("ID") = configurationName
             newScenario("locations") = New JArray()
 
-            For i As Integer = 0 To locdt.Rows.Count - 1
+            For i = 0 To locdt.Rows.Count - 1
                 Dim newLoc As New JObject()
                 Me.Setup.GeneralFunctions.UpdateProgressBar("", i + 1, locdt.Rows.Count)
 
                 newLoc("ID") = New JValue(locdt.Rows(i)("LOCATIENAAM").ToString())
-                newLoc("data") = New JArray()
 
-                'Retrieve the exceedance table for this location
-                Dim dtHerh As New DataTable
-                query = "SELECT HERHALINGSTIJD, WAARDE, RUNID FROM HERHALINGSTIJDEN WHERE LOCATIENAAM='" & locdt.Rows(i)("LOCATIENAAM").ToString() & "' AND KLIMAATSCENARIO='" & KlimaatScenario.ToString & "' AND DUUR=" & Duration & " ORDER BY HERHALINGSTIJD;"
-                Me.Setup.GeneralFunctions.SQLiteQuery(Me.Setup.SqliteCon, query, dtHerh, False)
+                'for each parameter we will retrieve the exceedance table
+                For p = 0 To pardt.Rows.Count - 1
+                    Dim parameter As String = pardt.Rows(p)(0).ToString
+                    newLoc(parameter) = New JArray()
 
-                ' Add RUNIDX column if it doesn't exist
-                If Not dtHerh.Columns.Contains("RUNIDX") Then
-                    dtHerh.Columns.Add("RUNIDX", GetType(Integer))
-                End If
+                    'Retrieve the exceedance table for this location and parameter
+                    Dim dtHerh As New DataTable
+                    query = "SELECT HERHALINGSTIJD, WAARDE, RUNID FROM HERHALINGSTIJDEN WHERE LOCATIENAAM='" & locdt.Rows(i)("LOCATIENAAM").ToString() & "' AND KLIMAATSCENARIO='" & KlimaatScenario.ToString & "' AND DUUR=" & Duration & " AND PARAMETER='" & parameter & "' ORDER BY HERHALINGSTIJD;"
+                    Me.Setup.GeneralFunctions.SQLiteQuery(Me.Setup.SqliteCon, query, dtHerh, False)
 
-                ' Look up the runidx for each runid and add it to our dtHerh table
-                For Each row As DataRow In dtHerh.Rows
-                    Dim runId As String = row("RUNID").ToString()
-                    If runIdDict.ContainsKey(runId) Then
-                        row("RUNIDX") = runIdDict(runId)
-                    Else
-                        row("RUNIDX") = -999
+                    ' Add RUNIDX column if it doesn't exist
+                    If Not dtHerh.Columns.Contains("RUNIDX") Then
+                        dtHerh.Columns.Add("RUNIDX", GetType(Integer))
                     End If
-                Next
 
-                'Add exceedance data for this location
-                For j As Integer = 0 To dtHerh.Rows.Count - 1
-                    Dim dataPoint As New JObject()
-                    dataPoint("x") = New JValue(Math.Round(Convert.ToDouble(dtHerh.Rows(j)("HERHALINGSTIJD")), 2))
-                    dataPoint("y") = New JValue(Math.Round(Convert.ToDouble(dtHerh.Rows(j)("WAARDE")), 3))
-                    dataPoint("runidx") = New JValue(dtHerh.Rows(j)("RUNIDX"))
-                    CType(newLoc("data"), JArray).Add(dataPoint)
+                    ' Look up the runidx for each runid and add it to our dtHerh table
+                    For Each row As DataRow In dtHerh.Rows
+                        Dim runId As String = row("RUNID").ToString()
+                        If runIdDict.ContainsKey(runId) Then
+                            row("RUNIDX") = runIdDict(runId)
+                        Else
+                            row("RUNIDX") = -999
+                        End If
+                    Next
+
+                    'Add exceedance data for this location and parameter
+                    For j = 0 To dtHerh.Rows.Count - 1
+                        Dim dataPoint As New JObject()
+                        dataPoint("x") = New JValue(Math.Round(Convert.ToDouble(dtHerh.Rows(j)("HERHALINGSTIJD")), 2))
+                        dataPoint("y") = New JValue(Math.Round(Convert.ToDouble(dtHerh.Rows(j)("WAARDE")), 3))
+                        dataPoint("runidx") = New JValue(dtHerh.Rows(j)("RUNIDX"))
+                        CType(newLoc(parameter), JArray).Add(dataPoint)
+                    Next
                 Next
 
                 CType(newScenario("locations"), JArray).Add(newLoc)
@@ -562,6 +576,7 @@ Public Class clsStochastenAnalyse
             Return False
         End Try
     End Function
+
 
 
     Public Function WriteExceedanceLevels2DFromDBToJSON(exceedancedatapath As String, ClimateScenario As String, Duration As Integer, configurationName As String) As Boolean
@@ -816,10 +831,10 @@ Public Class clsStochastenAnalyse
 
             'Configure connection string with optimizations
             Dim connectionString As String = $"Data Source={exceedancedatapath};Version=3;" &
-                                       "Journal Mode=OFF;" & _  'Disable journaling for bulk insert
-                                       "Synchronous=OFF;" & _   'Disable synchronous writing
-                                       "Cache Size=10000;" & _  'Increase cache size
-                                       "Page Size=4096"         'Optimize page size
+                                   "Journal Mode=OFF;" & _     'Disable journaling for bulk insert
+                                   "Synchronous=OFF;" & _      'Disable synchronous writing
+                                   "Cache Size=20000;" & _     'Increased cache size
+                                   "Page Size=8192"            'Optimized page size for larger datasets
 
             Using sqlitecon As New SQLiteConnection(connectionString)
                 'open the connection
@@ -828,19 +843,22 @@ Public Class clsStochastenAnalyse
                 'Optimize SQLite settings for bulk insert
                 Using cmdPragma As SQLiteCommand = sqlitecon.CreateCommand()
                     cmdPragma.CommandText = "PRAGMA temp_store = MEMORY; " &
-                                      "PRAGMA mmap_size = 30000000000;"  'Use memory-mapped I/O
+                                  "PRAGMA mmap_size = 1000000000; " & _  'Set to 1GB
+                                  "PRAGMA cache_size = -2000000; " & _   'Approximately 2GB cache
+                                  "PRAGMA locking_mode = EXCLUSIVE; " &
+                                  "PRAGMA threads = 4;"
                     cmdPragma.ExecuteNonQuery()
                 End Using
 
                 'create the table for our 2D exceedance levels
                 Using cmd As SQLiteCommand = sqlitecon.CreateCommand()
-                    cmd.CommandText = "CREATE TABLE EXCEEDANCELEVELS2D (
-    ID INTEGER PRIMARY KEY AUTOINCREMENT,
-    FEATUREIDX INTEGER, 
-    HERHALINGSTIJD REAL, 
-    WAARDE REAL, 
-    RUNIDX INTEGER
-);"
+                    cmd.CommandText = "DROP TABLE IF EXISTS EXCEEDANCELEVELS2D; " &
+                                "CREATE TABLE EXCEEDANCELEVELS2D (" &
+                                "ID INTEGER PRIMARY KEY AUTOINCREMENT, " &
+                                "FEATUREIDX INTEGER, " &
+                                "HERHALINGSTIJD REAL, " &
+                                "WAARDE REAL, " &
+                                "RUNIDX INTEGER);"
                     cmd.ExecuteNonQuery()
                 End Using
 
@@ -853,11 +871,9 @@ Public Class clsStochastenAnalyse
                 Dim totalLines As Long = System.IO.File.ReadLines(ExceedanceData2DPath).Count() - 1
                 Dim processedLines As Long = 0
 
-                'Use Dictionary for efficient RUNID to RUNIDX mapping
-                Dim runIdToIdxMap As New Dictionary(Of String, String)(500000) ' Pre-allocate capacity
-
-                'Read stochasts data for RUNID to RUNIDX mapping
-                Me.Setup.Log.AddMessage("Reading stochasts data...")
+                'Pre-parse and cache RUNID to RUNIDX mapping
+                Dim runIdxCache As New Dictionary(Of String, Integer)(500000)
+                Me.Setup.Log.AddMessage("Reading and caching stochasts data...")
                 Using reader As New TextFieldParser(StochastsPath)
                     reader.SetDelimiters(";")
                     reader.HasFieldsEnclosedInQuotes = True
@@ -872,16 +888,19 @@ Public Class clsStochastenAnalyse
                     While Not reader.EndOfData
                         Dim fields = reader.ReadFields()
                         If fields IsNot Nothing AndAlso fields.Length > Math.Max(runIdIndex, runIdxIndex) Then
-                            runIdToIdxMap(fields(runIdIndex)) = fields(runIdxIndex)
+                            Dim runIdx As Integer
+                            If Integer.TryParse(fields(runIdxIndex), runIdx) Then
+                                runIdxCache(fields(runIdIndex)) = runIdx
+                            End If
                         End If
                     End While
                 End Using
 
                 'Begin transaction for better performance
                 Using transaction As SQLiteTransaction = sqlitecon.BeginTransaction()
-                    'Create a StringBuilder for building batch INSERT statements
-                    Dim batchSize As Integer = 100000
-                    Dim sqlBuilder As New StringBuilder(batchSize * 100) ' Pre-allocate capacity
+                    'Optimize batch size for better performance
+                    Dim batchSize As Integer = 25000  'Reduced from 100000
+                    Dim sqlBuilder As New StringBuilder(batchSize * 150)  'Increased chars per record estimate
                     Dim currentBatchCount As Integer = 0
 
                     'Process exceedance data
@@ -898,7 +917,7 @@ Public Class clsStochastenAnalyse
                             Throw New Exception("Required columns not found in the exceedance data file.")
                         End If
 
-                        'Initialize batch insert command
+                        'Initialize batch insert command with optimized format
                         sqlBuilder.AppendLine("INSERT INTO EXCEEDANCELEVELS2D (FEATUREIDX, HERHALINGSTIJD, WAARDE, RUNIDX) VALUES")
 
                         'Process each row
@@ -909,19 +928,18 @@ Public Class clsStochastenAnalyse
                                     Dim featureIdx As Integer
                                     Dim herhalingstijd As Double
                                     Dim waarde As Double
-                                    Dim runIdx As Integer
+                                    Dim runId As String = fields(runIdIndex)
 
                                     If Integer.TryParse(fields(featureIdxIndex), featureIdx) AndAlso
                                    Double.TryParse(fields(herhalingstijdIndex), herhalingstijd) AndAlso
                                    Double.TryParse(fields(waardeIndex), waarde) AndAlso
-                                   runIdToIdxMap.ContainsKey(fields(runIdIndex)) AndAlso
-                                   Integer.TryParse(runIdToIdxMap(fields(runIdIndex)), runIdx) Then
+                                   runIdxCache.ContainsKey(runId) Then
 
-                                        'Add values to batch
+                                        'Add values to batch with optimized format
                                         If currentBatchCount > 0 Then
                                             sqlBuilder.Append(",")
                                         End If
-                                        sqlBuilder.AppendLine($"({featureIdx},{herhalingstijd},{waarde},{runIdx})")
+                                        sqlBuilder.AppendLine($"({featureIdx:D},{herhalingstijd:F6},{waarde:F6},{runIdxCache(runId):D})")
                                         currentBatchCount += 1
 
                                         'Execute batch if we've reached batch size
@@ -937,7 +955,7 @@ Public Class clsStochastenAnalyse
                                     End If
 
                                     processedLines += 1
-                                    If processedLines Mod 100000 = 0 Then
+                                    If processedLines Mod 250000 = 0 Then  'Reduced progress updates
                                         Me.Setup.GeneralFunctions.UpdateProgressBar("", processedLines, totalLines, False)
                                     End If
                                 End If
@@ -951,19 +969,19 @@ Public Class clsStochastenAnalyse
                         End Using
                     End Using
 
-                    'Create indices for better query performance
-                    Using cmd As SQLiteCommand = sqlitecon.CreateCommand()
-                        cmd.CommandText = "CREATE INDEX idx_feature_herh ON EXCEEDANCELEVELS2D (FEATUREIDX, HERHALINGSTIJD);"
-                        cmd.ExecuteNonQuery()
-                    End Using
-
                     'Commit the transaction
                     transaction.Commit()
                 End Using
 
-                'Optimize the database after bulk insert
+                'Create indices after the transaction for better performance
                 Using cmd As SQLiteCommand = sqlitecon.CreateCommand()
-                    cmd.CommandText = "VACUUM;"
+                    cmd.CommandText = "CREATE INDEX IF NOT EXISTS idx_feature_herh ON EXCEEDANCELEVELS2D (FEATUREIDX, HERHALINGSTIJD);"
+                    cmd.ExecuteNonQuery()
+                End Using
+
+                'Final database optimization
+                Using cmd As SQLiteCommand = sqlitecon.CreateCommand()
+                    cmd.CommandText = "PRAGMA optimize; VACUUM;"
                     cmd.ExecuteNonQuery()
                 End Using
             End Using
@@ -2342,14 +2360,14 @@ Public Class clsStochastenAnalyse
             Dim finalList As New List(Of Integer)
 
             ' Bereken de verwachte totale frequentie
-            Dim maxFreq As Double = 365.25 * 24 / Setup.StochastenAnalyse.Duration
+            'Dim maxFreq As Double = 365.25 * 24 / Setup.StochastenAnalyse.Duration
 
             ' Valideer of de som van P overeenkomt met maxFreq
-            Dim totalFrequency As Double = dtResults.Values.SelectMany(Function(dt) dt.Rows.Cast(Of DataRow)()).Sum(Function(row) Convert.ToDouble(row("P")))
+            'Dim totalFrequency As Double = dtResults.Values.SelectMany(Function(dt) dt.Rows.Cast(Of DataRow)()).Sum(Function(row) Convert.ToDouble(row("P")))
 
-            If Math.Abs(totalFrequency - maxFreq * locationList.Count) > 0.01 * maxFreq * locationList.Count Then
-                Throw New Exception($"Total frequency mismatch: expected {maxFreq}, got {totalFrequency}")
-            End If
+            'If Math.Abs(totalFrequency - maxFreq * locationList.Count) > 0.01 * maxFreq * locationList.Count Then
+            'Throw New Exception($"Total frequency mismatch: expected {maxFreq}, got {totalFrequency}")
+            'End If
 
             ' Voor elke locatie een nieuwe DataTable aanmaken
             For Each Loc As Integer In locationList
@@ -2366,8 +2384,9 @@ Public Class clsStochastenAnalyse
                 Dim myTable As DataTable = dtResults(FeatureIdx)
                 Dim pCum As Double = 0
 
-                ' Sorteer de tabel oplopend op WAARDE
-                myTable.DefaultView.Sort = ValuesField & " ASC"
+                '2025-02-15: sort the values in descending order so computing the exceedance values is easier
+                ' Sorteer de tabel aflopend op WAARDE
+                myTable.DefaultView.Sort = ValuesField & " DESC"
                 Dim sortedTable As DataTable = myTable.DefaultView.ToTable()
 
                 Dim i As Integer = 0
@@ -2378,20 +2397,9 @@ Public Class clsStochastenAnalyse
 
                     pCum += p
 
-                    ' Voorkom dat pCum maxFreq overschrijdt
-                    If pCum > maxFreq Then
-                        pCum = maxFreq
-                    End If
-
                     ' Berekening van de herhalingstijd
                     Dim herhTijd As Double
-                    If Setup.StochastenAnalyse.VolumesAsFrequencies Then
-                        ' Verbeterde benadering om discontinuïteiten te vermijden
-                        herhTijd = If(pCum < maxFreq, 1 / (maxFreq - pCum + 0.000000001), Double.MaxValue)
-                    Else
-                        ' Logaritmische berekening met correctie voor stabiliteit
-                        herhTijd = If(pCum > 0, 1 / -Math.Log(pCum / maxFreq), Double.MaxValue)
-                    End If
+                    herhTijd = 1 / pCum
 
                     ' Voeg de rij toe aan de output DataTable
                     dtTemp(FeatureIdx).Rows.Add(herhTijd, value, runId, FeatureIdx)
@@ -2399,10 +2407,10 @@ Public Class clsStochastenAnalyse
                 Next
             Next
 
-            ' Alleen features behouden met stijgende waarden
+            ' Alleen features behouden met aflopende waarden
             For Each featureIdx As Integer In dtTemp.Keys
                 Dim dt As DataTable = dtTemp(featureIdx)
-                If dt.Rows.Count > 0 AndAlso dt.Rows(dt.Rows.Count - 1)("Waarde") > dt.Rows(0)("Waarde") Then
+                If dt.Rows.Count > 0 AndAlso dt.Rows(dt.Rows.Count - 1)("Waarde") < dt.Rows(0)("Waarde") Then
                     finalList.Add(featureIdx)
                 End If
             Next

@@ -105,8 +105,14 @@ Public Class frmPublish
                 Me.Setup.GeneralFunctions.UpdateProgressBar("Operation complete.", 0, 10, True)
                 Me.Cursor = Cursors.Default
 
-                'execute the html file in the default browser
-                Process.Start(ViewerDir & "\index.html")
+                'if we're using the API functionality, we'll start the API before launching the webviewer
+                If radAPI.Checked Then
+                    ' Launch API and viewer asynchronously
+                    Await LaunchAPIAndViewer(ViewerDir)
+                Else
+                    ' If not using API, just launch the viewer directly
+                    Process.Start(ViewerDir & "\index.html")
+                End If
 
             ElseIf radExistingWebviewer.Checked Then
                 'first we'll browse to the existing webviewer directory
@@ -162,29 +168,28 @@ Public Class frmPublish
             Dim Settings As JObject = readSettings(viewerDir & "\js\settings.js")
             Dim Scenarios As List(Of String) = getScenarios(viewerDir & "\js\settings.js")
 
-            'write the run_api.bat file
-            Using apiWriter As New StreamWriter(viewerDir & "\run_api.bat")
-                Dim myStr As String = viewerDir & "\exceedance_api.exe --port " & Settings("port").ToString
-                For Each Scenario In Scenarios
-                    myStr &= " --scenario " & Scenario & " --db " & viewerDir & "\" & Scenario & ".db"
-                Next
-                apiWriter.WriteLine("python api.py")
-            End Using
+            ' Build the API command with all scenarios
+            Dim apiCommand As String = viewerDir & "\exceedance_api.exe --port " & Settings("exceedancetables2dapi")("port").ToString
+            For Each Scenario In Scenarios
+                apiCommand &= " --scenario """ & Scenario & """ --db """ & viewerDir & "\" & Scenario & ".db"""
+            Next
 
             ' Start the API process
             Dim apiProcess As New Process()
             With apiProcess.StartInfo
-                .FileName = viewerDir & "\run_api.bat"
+                .FileName = viewerDir & "\exceedance_api.exe"
+                .Arguments = apiCommand.Substring(apiCommand.IndexOf("--port"))  ' Remove the executable path from arguments
                 .UseShellExecute = False
                 .RedirectStandardOutput = True
                 .CreateNoWindow = True
+                .WorkingDirectory = viewerDir  ' Set working directory to ensure relative paths work
             End With
             apiProcess.Start()
 
             ' Wait for API to be ready by checking if port is listening
             Dim maxAttempts As Integer = 30  ' Maximum number of attempts (30 * 500ms = 15 seconds max)
             Dim attempts As Integer = 0
-            Dim port As Integer = Integer.Parse(ReadPortFromSettings(viewerDir & "\js\settings.js"))
+            Dim port As Integer = Integer.Parse(Settings("exceedancetables2dapi")("port").ToString)
 
             While attempts < maxAttempts
                 If Await IsPortListening("localhost", port) Then
@@ -197,7 +202,6 @@ Public Class frmPublish
             End While
 
             Throw New Exception("API failed to start within the timeout period")
-
         Catch ex As Exception
             Throw New Exception("Error launching API and viewer: " & ex.Message)
         End Try
